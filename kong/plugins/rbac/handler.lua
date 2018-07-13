@@ -1,8 +1,14 @@
 local responses = require "kong.tools.responses"
+local constants = require "kong.constants"
+local singletons = require "kong.singletons"
 local public_tools = require "kong.tools.public"
 local BasePlugin = require "kong.plugins.base_plugin"
-local access = require "kong.plugins.rbac.access"
+local _ = require "lodash"
+local router = require "router"
+local rbac_constants = require "kong.plugins.rbac.constants"
+local rbac_functions = require "kong.plugins.rbac.functions"
 
+local ngx_set_header = ngx.req.set_header
 local ngx_get_headers = ngx.req.get_headers
 local set_uri_args = ngx.req.set_uri_args
 local get_uri_args = ngx.req.get_uri_args
@@ -13,6 +19,7 @@ local ngx_encode_args = ngx.encode_args
 local get_method = ngx.req.get_method
 local type = type
 
+-- local _realm = 'Key realm="' .. _KONG._NAME .. '"'
 local _realm = 'Key realm="RBAC"'
 
 local RBACAuthHandler = BasePlugin:extend()
@@ -24,14 +31,105 @@ function RBACAuthHandler:new()
   RBACAuthHandler.super.new(self, "rbac")
 end
 
-local function do_authentication(conf)
-  if type(conf.key_names) ~= "table" then
-    return false, {status = 500, message = "Invalid plugin configuration"}
+local function load_credential(key)
+  local creds, err = singletons.dao.rbac_credentials:find_all {
+    key = key
+  }
+  if not creds then
+    return nil, err
+  end
+  return creds[1]
+end
+
+local function load_consumer(consumer_id, anonymous)
+  local result, err = singletons.dao.consumers:find { id = consumer_id }
+  if not result then
+    if anonymous and not err then
+      err = 'anonymous consumer "' .. consumer_id .. '" not found'
+    end
+    return nil, err
+  end
+  return result
+end
+
+local function load_api_resources(api_id)
+  local cache = singletons.cache
+  local dao = singletons.dao
+
+  local resources_cache_key = dao.rbac_resources:cache_key(api_id)
+  local resources, err = cache:get(resources_cache_key, nil, (function(id)
+    return dao.rbac_resources:find_all({ api_id = id })
+  end), api_id)
+  
+  if err then
+    return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
+  end
+  return resources
+end
+
+local function set_consumer(consumer, credential)
+  ngx_set_header(constants.HEADERS.CONSUMER_ID, consumer.id)
+  ngx_set_header(constants.HEADERS.CONSUMER_CUSTOM_ID, consumer.custom_id)
+  ngx_set_header(constants.HEADERS.CONSUMER_USERNAME, consumer.username)
+  ngx.ctx.authenticated_consumer = consumer
+  if credential then
+    ngx_set_header(constants.HEADERS.CREDENTIAL_USERNAME, credential.username)
+    ngx.ctx.authenticated_credential = credential
+    ngx_set_header(constants.HEADERS.ANONYMOUS, nil) -- in case of auth plugins concatenation
+  else
+    ngx_set_header(constants.HEADERS.ANONYMOUS, true)
+  end
+end
+
+local function do_rbac(consumer, api)
+  local api_resources = load_api_resources(api.id)
+  if table.getn(api_resources) < 1 then
+    return true
   end
 
-  local ok, err = access.ignoreAeecss()
-  if ok then
-    return ok
+  local consumer_resources = rbac_functions.load_consumer_resources(consumer.id)
+  local r = router.new()
+  local ok = false
+  local matched_protected_resource = false
+  local HTTP_METHODS = { 'get', 'post', 'put', 'patch', 'delete', 'trace', 'connect', 'options', 'head' }
+  
+  _.forEach(api_resources, (function(resource)
+    local methods = {}
+    if (resource.method == 'any' or resource.method == 'all') then
+      methods = HTTP_METHODS
+    else
+      methods = { resource.method }
+    end
+
+    for i, method in ipairs(methods) do
+      r:match(string.upper(method), resource.upstream_path, function()
+        matched_protected_resource = true
+        for i, consumer_resource in ipairs(consumer_resources) do
+          ok = consumer_resource.resource_id == resource.id
+          if ok then
+            break
+          end
+        end
+      end)
+    end
+  end))
+
+  local uri_to_match = ngx.var.uri
+  if ngx.ctx.api.strip_uri then
+    uri_to_match = string.sub(ngx.var.uri, string.len(ngx.ctx.router_matches.uri) + 1)
+  end
+  
+  r:execute(string.upper(get_method()), uri_to_match)
+  if not matched_protected_resource then
+    ok = true
+  end
+  return ok
+end
+
+local function do_authentication(conf)
+  if type(conf.key_names) ~= "table" then
+    ngx.log(ngx.ERR, "[rbac] no conf.key_names set, aborting plugin execution")
+    return false, { status = 500, message = "Invalid plugin configuration" }
   end
 
   local key
@@ -77,22 +175,56 @@ local function do_authentication(conf)
       break
     elseif type(v) == "table" then
       -- duplicate API key, HTTP 401
-      return false, {status = 401, message = "Duplicate API key found"}
+      return false, { status = 401, message = "Duplicate API key found" }
     end
   end
 
   -- this request is missing an API key, HTTP 401
   if not key then
     ngx.header["WWW-Authenticate"] = _realm
-    return false, {status = 401, message = "No API key found in request"}
+    return false, { status = 401, message = "No API key found in request" }
   end
 
-  return access.execute(key, conf)
+  local cache = singletons.cache
+  local dao = singletons.dao
+
+  local credential_cache_key = dao.rbac_credentials:cache_key(key)
+  local credential, credential_err = cache:get(credential_cache_key, nil,
+    load_credential, key)
+  if credential_err then
+    return responses.send_HTTP_INTERNAL_SERVER_ERROR(credential_err)
+  end
+
+  -- no credential in DB, for this key, it is invalid, HTTP 403
+  if not credential then
+    return false, { status = 403, message = "Invalid authentication credentials" }
+  end
+
+  -- credential expired.
+  if credential.expired_at and credential.expired_at <= (os.time() * 1000) then
+    return false, { status = 403, message = "Invalid authentication credentials" }
+  end
+  -----------------------------------------
+  -- Success, this request is authenticated
+  -----------------------------------------
+
+  -- retrieve the consumer linked to this API key, to set appropriate headers
+
+  local consumer_cache_key = dao.consumers:cache_key(credential.consumer_id)
+  local consumer, err = cache:get(consumer_cache_key, nil, load_consumer,
+    credential.consumer_id)
+  if err then
+    return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
+  end
+
+  set_consumer(consumer, credential)
+
+  return consumer
 end
 
 function RBACAuthHandler:access(conf)
   RBACAuthHandler.super.access(self)
-
+  ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'ignored')
   -- check if preflight request and whether it should be authenticated
   if not conf.run_on_preflight and get_method() == "OPTIONS" then
     return
@@ -104,10 +236,42 @@ function RBACAuthHandler:access(conf)
     return
   end
 
-  local ok, err = do_authentication(conf)
-  if not ok then
+  local consumer, err = do_authentication(conf)
+  if not consumer then
+    if conf.anonymous ~= "" then
+      -- get anonymous user
+      local consumer_cache_key = singletons.dao.consumers:cache_key(conf.anonymous)
+      local anonymous_err
+      consumer, anonymous_err = singletons.cache:get(consumer_cache_key, nil,
+        load_consumer,
+        conf.anonymous, true)
+      if anonymous_err then
+        responses.send_HTTP_INTERNAL_SERVER_ERROR(anonymous_err)
+      end
+      set_consumer(consumer, nil)
+    else
       return responses.send(err.status, err.message)
+    end
   end
+
+  if conf.rbac_enabled and consumer then
+    if _.includes(rbac_functions.get_root_consumers(), consumer.id) then
+      ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'approved')
+      return
+    end
+
+    local ok, rbac_err = do_rbac(consumer, ngx.ctx.api)
+    if rbac_err then
+      return responses.send_HTTP_INTERNAL_SERVER_ERROR(rbac_err)
+    end
+
+    if not ok then
+      ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'denied')
+      return responses.send_HTTP_FORBIDDEN('Access denied.')
+    end
+  end
+
+  ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'approved')
 end
 
 return RBACAuthHandler
