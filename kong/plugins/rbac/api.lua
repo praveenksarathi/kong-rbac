@@ -206,6 +206,7 @@ return {
       elseif next(roles) == nil then
         return helpers.responses.send_HTTP_NOT_FOUND('Role ' .. self.params.role_name_or_id .. ' not found.')
       end
+
       self.role_name_or_id = self.params.role_name_or_id;
       self.params.role_name_or_id = nil
       self.params.role_id = roles[1].id
@@ -223,8 +224,26 @@ return {
     end,
 
     POST = function(self, dao_factory)
+      if self.params.consumer_id then
+        local role_consumers, err = crud.find_by_id_or_field(
+          dao_factory.rbac_role_consumers,
+          {},
+          self.params.consumer_id,
+          "consumer_id"
+        )
+
+        if err then
+          return helpers.yield_error(err)
+        elseif table.getn(role_consumers) > 0 then
+          _.forEach(role_consumers, function(role_consumer)
+            dao_factory.rbac_role_consumers:delete(role_consumer);
+          end)
+        end
+      end
+      
       crud.post(self.params, dao_factory.rbac_role_consumers)
     end,
+
     DELETE = function(self, dao_factory, helpers)
       local role_consumers = dao_factory.rbac_role_consumers:find_all(self.params)
       --local primary_keys = {}
