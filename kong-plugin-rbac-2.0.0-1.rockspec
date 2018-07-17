@@ -5,14 +5,14 @@ local pluginName = 'rbac'
 supported_platforms = {"linux", "macosx"}
 source = {
   -- these are initially not required to make it work
-  url = "git://github.com/mr5/kong-rbac",
-  tag = "0.3.6"
+  url = "git://github.com/hhy5861/kong-rbac",
+  tag = "2.0.0"
 }
 version = source.tag .. "-1"
 
 description = {
   summary = "Kong-rbac is a rbac plugin for Kong",
-  homepage = "https://github.com/mr5/kong-rbac",
+  homepage = "https://github.com/hhy5861/kong-rbac",
   license = "Apache-2.0"
 }
 
