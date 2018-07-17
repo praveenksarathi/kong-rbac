@@ -45,7 +45,34 @@ local function get_root_consumers()
   return {}
 end
 
+local function get_public_resources(api_id)
+  local cache = singletons.cache
+  local dao = singletons.dao
+
+  local visibility = "public"
+  local resources_public_cache_key = dao.rbac_resources:cache_key(api_id.id..visibility)
+  local resources_public, err = cache:get(resources_public_cache_key, nil, (function(id)
+    return dao.rbac_resources:find_all({ api_id = api_id.id, visibility = visibility })
+  end), api_id.id)
+
+  return resources_public, err
+end
+
+local function filter_method_any(method)
+  local methods = {}
+  local HTTP_METHODS = { 'get', 'post', 'put', 'patch', 'delete', 'trace', 'connect', 'options', 'head' }
+  if (method == 'ANY' or method == 'ALL') then
+    methods = HTTP_METHODS
+  else
+    methods = { method }
+  end
+
+  return methods
+end
+
 return {
   load_consumer_resources = load_consumer_resources,
-  get_root_consumers = get_root_consumers
+  get_root_consumers = get_root_consumers,
+  get_public_resources = get_public_resources,
+  filter_method_any = filter_method_any
 }

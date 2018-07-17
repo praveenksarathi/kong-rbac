@@ -91,16 +91,9 @@ local function do_rbac(consumer, api)
   local r = router.new()
   local ok = false
   local matched_protected_resource = false
-  local HTTP_METHODS = { 'get', 'post', 'put', 'patch', 'delete', 'trace', 'connect', 'options', 'head' }
   
   _.forEach(api_resources, (function(resource)
-    local methods = {}
-    if (resource.method == 'any' or resource.method == 'all') then
-      methods = HTTP_METHODS
-    else
-      methods = { resource.method }
-    end
-
+    local methods = rbac_functions.filter_method_any(resource.method)
     for i, method in ipairs(methods) do
       r:match(string.upper(method), resource.upstream_path, function()
         matched_protected_resource = true
@@ -115,15 +108,36 @@ local function do_rbac(consumer, api)
   end))
 
   local uri_to_match = ngx.var.uri
-  if ngx.ctx.api.strip_uri then
-    uri_to_match = string.sub(ngx.var.uri, string.len(ngx.ctx.router_matches.uri) + 1)
-  end
+  -- if ngx.ctx.api.strip_uri then
+  --   uri_to_match = string.sub(ngx.var.uri, string.len(ngx.ctx.router_matches.uri) + 1)
+  -- end
   
   r:execute(string.upper(get_method()), uri_to_match)
   if not matched_protected_resource then
     ok = true
   end
+
   return ok
+end
+
+local function do_ignoredAccess(apis)
+  local public_resources, err = rbac_functions.get_public_resources(apis)
+  if not err and table.getn(public_resources) > 0 then
+    local matched_protected_resource = false
+    local r = router.new()
+
+    _.forEach(public_resources, function(resource) 
+      local methods = rbac_functions.filter_method_any(resource.method)
+      for i, method in ipairs(methods) do
+        r:match(string.upper(method), resource.upstream_path, function()
+          matched_protected_resource = true
+        end)
+      end
+    end)
+
+    r:execute(string.upper(get_method()), ngx.var.uri)
+    return matched_protected_resource
+  end
 end
 
 local function do_authentication(conf)
@@ -236,7 +250,18 @@ function RBACAuthHandler:access(conf)
     return
   end
 
+  local apis = ngx.ctx.api
+
+  -- check ignored access
+  if conf.rbac_enabled then
+    local ok = do_ignoredAccess(apis)
+    if ok then
+      return
+    end
+  end
+
   local consumer, err = do_authentication(conf)
+  ngx.log(ngx.ERR, err)
   if not consumer then
     if conf.anonymous ~= "" then
       -- get anonymous user
@@ -254,13 +279,18 @@ function RBACAuthHandler:access(conf)
     end
   end
 
+  if conf.anonymous ~= "" and conf.anonymous == consumer.id then
+    ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'approved')
+    return
+  end
+
   if conf.rbac_enabled and consumer then
     if _.includes(rbac_functions.get_root_consumers(), consumer.id) then
       ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'approved')
       return
     end
 
-    local ok, rbac_err = do_rbac(consumer, ngx.ctx.api)
+    local ok, rbac_err = do_rbac(consumer, apis)
     if rbac_err then
       return responses.send_HTTP_INTERNAL_SERVER_ERROR(rbac_err)
     end
