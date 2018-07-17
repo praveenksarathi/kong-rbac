@@ -51,7 +51,7 @@ return {
     ]],
   },
   {
-    name = "2018-05-22-101000_rbac_credentials",
+    name = "2018-05-22-101000_rbac_credentials,
     up = [[
       CREATE TABLE IF NOT EXISTS rbac_credentials(
         id uuid,
