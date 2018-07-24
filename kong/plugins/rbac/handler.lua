@@ -261,7 +261,6 @@ function RBACAuthHandler:access(conf)
   end
 
   local consumer, err = do_authentication(conf)
-  ngx.log(ngx.ERR, err)
   if not consumer then
     if conf.anonymous ~= "" then
       -- get anonymous user
