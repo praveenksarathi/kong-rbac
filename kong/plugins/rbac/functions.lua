@@ -2,6 +2,7 @@ local responses = require "kong.tools.responses"
 local singletons = require "kong.singletons"
 local pl_stringx = require "pl.stringx"
 local _ = require "lodash"
+local rbac_constants = require "kong.plugins.rbac.constants"
 
 local function load_consumer_resources(consumer_id)
   local cache = singletons.cache
@@ -75,7 +76,7 @@ local function refresh_expired(conf, id)
     conf.expired = 1800
   end
 
-  local expired = (os.time()+ conf.expired) * 1000
+  local expired = (os.time()+ conf.expired + rbac_constants.HEADERS.KONG_EXPIRED) * 1000
   singletons.dao.rbac_credentials:update({
     id = id
   }, {

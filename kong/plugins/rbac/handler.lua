@@ -215,12 +215,16 @@ local function do_authentication(conf)
   end
 
   -- credential expired.
-  if credential.expired_at and credential.expired_at <= (os.time() * 1000) then
+  if credential.expired_at and (credential.expired_at - rbac_constants.HEADERS.KONG_EXPIRED) <= (os.time() * 1000) then
     return false, { status = 401, message = "Invalid authentication credentials" }
   end
 
   if next(credential) ~= nil then
-    rbac_functions.refresh_expired(conf, credential.id)
+    -- 600" update user login expired status 
+    local now = (credential.expired_at - (os.time() * 1000)) / 1000 - 1800
+    if now <= 0 then
+      rbac_functions.refresh_expired(conf, credential.id)
+    end
   end
   -----------------------------------------
   -- Success, this request is authenticated
