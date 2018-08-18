@@ -3,7 +3,7 @@ local singletons = require "kong.singletons"
 
 local function default_key_names(t)
   if not t.key_names then
-    return { "api_key", "x-token" }
+    return { "api_key", "x-token", "token" }
   end
 end
 
@@ -73,7 +73,11 @@ return {
     },
     rbac_enabled = {
       type = "boolean",
-      default = true
+      default = true,
+    },
+    expired = {
+      type = "integer",
+      default = 1800,
     }
   },
   self_check = function(schema, plugin_t, dao, is_updating)

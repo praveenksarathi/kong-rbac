@@ -211,12 +211,16 @@ local function do_authentication(conf)
 
   -- no credential in DB, for this key, it is invalid, HTTP 403
   if not credential then
-    return false, { status = 403, message = "Invalid authentication credentials" }
+    return false, { status = 401, message = "Invalid authentication credentials" }
   end
 
   -- credential expired.
   if credential.expired_at and credential.expired_at <= (os.time() * 1000) then
-    return false, { status = 403, message = "Invalid authentication credentials" }
+    return false, { status = 401, message = "Invalid authentication credentials" }
+  end
+
+  if next(credential) ~= nil then
+    rbac_functions.refresh_expired(conf, credential.id)
   end
   -----------------------------------------
   -- Success, this request is authenticated
@@ -251,7 +255,6 @@ function RBACAuthHandler:access(conf)
   end
 
   local apis = ngx.ctx.api
-
   -- check ignored access
   if conf.rbac_enabled then
     local ok = do_ignoredAccess(apis)
@@ -259,7 +262,7 @@ function RBACAuthHandler:access(conf)
       return
     end
   end
-
+  
   local consumer, err = do_authentication(conf)
   if not consumer then
     if conf.anonymous ~= "" then
@@ -277,7 +280,7 @@ function RBACAuthHandler:access(conf)
       return responses.send(err.status, err.message)
     end
   end
-
+  
   if conf.anonymous ~= "" and conf.anonymous == consumer.id then
     ngx_set_header(rbac_constants.HEADERS.KONG_RBAC, 'approved')
     return

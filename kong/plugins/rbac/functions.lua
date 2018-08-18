@@ -70,9 +70,23 @@ local function filter_method_any(method)
   return methods
 end
 
+local function refresh_expired(conf, id)
+  if not conf.expired then
+    conf.expired = 1800
+  end
+
+  local expired = (os.time()+ conf.expired) * 1000
+  singletons.dao.rbac_credentials:update({
+    id = id
+  }, {
+    expired_at = expired
+  })
+end
+
 return {
   load_consumer_resources = load_consumer_resources,
   get_root_consumers = get_root_consumers,
   get_public_resources = get_public_resources,
-  filter_method_any = filter_method_any
+  filter_method_any = filter_method_any,
+  refresh_expired = refresh_expired
 }

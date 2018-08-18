@@ -6,7 +6,7 @@ supported_platforms = {"linux", "macosx"}
 source = {
   -- these are initially not required to make it work
   url = "git://github.com/hhy5861/kong-rbac",
-  tag = "2.0.0"
+  tag = "2.0.1"
 }
 version = source.tag .. "-1"
 
