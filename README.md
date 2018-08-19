@@ -5,7 +5,7 @@ This is a rbac plugin for kong CE.
 ## INSTALLATION
 
 ```
-luarocks install kong-plugin-rbac
+luarocks install --server=http://luarocks.org/manifests/hhy5861 kong-plugin-rbac
 ```
 
 set environment
