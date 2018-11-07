@@ -346,12 +346,12 @@ return {
     end
   },
 
-  ["/rbac/credentials/:username_or_id/consumer/"] = {
+  ["/rbac/credentials/:user_id/consumer-id/"] = {
     before = function(self, dao_factory, helpers)
       local credentials, err = crud.find_by_id_or_field(
         dao_factory.rbac_credentials,
         {},
-        self.params.username_or_id,
+        self.params.user_id,
         "consumer_id"
       )
 
