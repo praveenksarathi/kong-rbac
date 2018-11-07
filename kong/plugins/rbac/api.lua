@@ -346,6 +346,29 @@ return {
     end
   },
 
+  ["/rbac/consumer/:username_or_id/rbac-credentials/"] = {
+    before = function(self, dao_factory, helpers)
+      local credentials, err = crud.find_by_id_or_field(
+        dao_factory.rbac_credentials,
+        {},
+        self.params.username_or_id,
+        "consumer_id"
+      )
+
+      if err then
+        return helpers.yield_error(err)
+      elseif next(credentials) == nil then
+        return helpers.responses.send_HTTP_NOT_FOUND('Credential ' .. self.params.username_or_id .. ' not found.')
+      end
+
+      self.params = credentials[1]
+    end,
+
+    DELETE = function(self, dao_factory)
+      crud.delete(self.params, dao_factory.rbac_credentials)
+    end
+  },
+
   ["/apis/:api_name_or_id/rbac-resources/"] = {
     before = function(self, dao_factory, helpers)
       crud.find_api_by_name_or_id(self, dao_factory, helpers)
