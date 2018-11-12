@@ -1,8 +1,8 @@
-FROM kong:0.14.0-alpine
+FROM kong:0.14.1-alpine
 MAINTAINER Mike Huang, hhy5861@gmail.com
 
 ENV KONG_VERSION 0.14.0
-ENV KONG_IMAGES_TAG 2.0.1
+ENV KONG_IMAGES_TAG 2.1.0
 ENV KONG_DATABASE postgres
 ENV KONG_PLUGINS 'bundled, rbac'
 
